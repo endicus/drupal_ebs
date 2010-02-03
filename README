@@ -9,10 +9,36 @@ Dependency
 ----------
 Ubercart - http://drupal.org/project/ubercart
 
+Installation
+------------
+This module work on the top of Ubercart, so make sure you have installed ubercart
+module in your drupal site before you proceed with these steps.
+
+o Download this EBS module from project page http://github.com/endicus/drupal_ebs 
+by clicking "Download source" button on the top. As of now it supports only
+drupal 6.x
+
+o Install the module by navigating to "Admin -> Site Building -> Modules". Procedure
+for installation is very similar to other contrib modules. If you are new to drupal
+refer http://drupal.org/node/70151
+
+o Enable EBS payment method by navigating to "Administer -> store admin -> settings 
+-> payment settings". 
+
+o Enter your EBS credentials account id and account secret key.
+
+
+EBS provides features to test the payment processing. For testing set the payment mode
+to "test" and purchase some items on your web store. The test credit number, CVV Number
+and back name will be informed to you by EBS.
+
+Note: EBS account id and secret key will work only for the domain name specified 
+during the signup.
 
 This module is tested with drupal 6.15 and ubercart 2.2. Feel free to report, if 
 you happen to find bug or any issue.
 
 For commercial customization of this module and drupal e-commerce projects,
 contact http://e-ndicus.com/contact-us
+
 
