@@ -1,0 +1,12 @@
+<?php
+// $Id: uc_ebs.install,v 1.1 2009/06/01 13:25:58 venkatrk Exp $
+
+/**
+ * @file
+ * Install file for uc_ebs.module.
+ */
+
+function uc_ebs_uninstall() {
+  db_query("DELETE FROM {variable} WHERE name LIKE 'uc_ebs_%%'");
+}
+
