@@ -1,7 +1,0 @@
-name = EBS Payment Gateway
-description = Enables payment processing using EBS (Electronic Billing Service) an Indian payment gateway.
-dependencies[] = uc_payment
-dependencies[] = currency_api
-package = Ubercart - payment
-core = 6.x
-php = 5.0
