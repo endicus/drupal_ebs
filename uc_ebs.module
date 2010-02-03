@@ -1,0 +1,296 @@
+<?php
+/**
+ * @file
+ * EBS payment gateway module file. Enables payment processing using EBS (Electronic Billing Service) an Indian payment gateway.
+ */
+
+/**
+ * Implementation of hook_menu().
+ */
+function uc_ebs_menu() {
+  // menu and callback invoked when redirected from ebs.in site to our drupal site. Logs the response obtained from ebs.in to watchdog and redirects the user to home page.
+  $items['ebs_response'] = array(
+    'title' => 'EBS Response',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'page callback' => 'uc_ebs_response',
+  );
+  return $items;
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter().
+ */
+function uc_ebs_form_uc_cart_checkout_review_form_alter(&$form, &$form_state) {
+  $order_id = (int) $_SESSION['cart_order'];
+  if ($order_id > 0) {
+    $order = uc_order_load($order_id);
+    if ($order->payment_method == 'ebs') {
+      unset($form['submit']);
+      $form['#prefix'] = '<table style="display: inline; padding-top: 1em;"><tr><td>';
+      $form['#suffix'] = '</td><td>'. drupal_get_form('uc_ebs_form', $order) .'</td></tr></table>';
+    }
+  }
+}
+
+/**
+ * Implementation of hook_payment_method().
+ */
+function uc_ebs_payment_method() {
+  $path = base_path() . drupal_get_path('module', 'uc_ebs');
+  // EBS image.
+  $title = '<img src="'. $path .'/img/ebs.png" style="position: relative; top: 5px; margin-right: 4px;">';
+  $title .= t('Credit card on a secure EBS server');
+  $methods[] = array(
+    'id' => 'ebs',
+    'name' => t('EBS'),
+    'title' => $title,
+    'review' => t('EBS payment service'),
+    'desc' => t('Redirects to EBS to pay by credit card.'),
+    'callback' => 'uc_payment_method_ebs',
+    'weight' => 3,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+  return $methods;
+}
+
+
+// Adds EBS settings to the payment method settings form.
+function uc_payment_method_ebs($op, &$arg1) {
+  switch ($op) {
+    case 'settings':
+      $form['id_info'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('EBS Credentials'),
+        '#description' => '<p>' . t('Account ID and Secret key are mandatory to get EBS payment gateway working. To find your Account ID and Secret Key <a href=!url>login</a> to your ebs account and Navigate to "EBS > Account > Settings.', array('!url' => 'https://secure.ebs.in/pg/ma/account/integration/')) . '</p><p>' . t('In the <a href="!address">checkout settings, address fields</a> make the "Phone number" field as required. EBS will expect to have phone number set otherwise error message will be reported.', array('!address' => 'admin/store/settings/checkout/edit/fields')) . '</p>',
+        '#collapsible' => FALSE,
+        '#collapsed' => FALSE,
+      );
+      $form['id_info']['uc_ebs_account_id'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Account ID'),
+        '#description' => t('Enter your EBS account ID. It is a four digit number.'),
+        '#default_value' => variable_get('uc_ebs_account_id', ''),
+        '#size' => 12,
+        '#required' => TRUE,
+      );
+      $form['id_info']['uc_ebs_account_key'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Account secret key'),
+        '#description' => t('Your EBS account secret key.'),
+        '#default_value' => variable_get('uc_ebs_account_key', ''),
+        '#size' => 12,
+        '#required' => TRUE,
+      );
+      $form['pay_info'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Payment information'),
+        '#description' => t('EBS only handles transactions in INR.'),
+        '#collapsible' => FALSE,
+        '#collapsed' => FALSE,
+      );
+      $form['pay_info']['uc_ebs_method'] = array(
+        '#type' => 'select',
+        '#title' => t('Payment method'),
+        '#description' => t('The method for capturing payment.'),
+        '#options' => array(
+          'LIVE' => t('Live transactions'),
+          'TEST' => t('Test transactions only'),
+        ),
+        '#default_value' => variable_get('uc_ebs_method', 'TEST'),
+      );
+      $form['pay_info']['uc_ebs_rate'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Exchange rate'),
+        '#description' => t("The rate of exchange between your site's default currency and INR. If left blank, currency_api is used."),
+        '#default_value' => variable_get('uc_ebs_rate', NULL),
+      );
+      $form['custom_info'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('User experience customization'),
+        '#collapsible' => FALSE,
+        '#collapsed' => FALSE,
+      );
+      $form['custom_info']['uc_ebs_return_location'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Return location'),
+        '#description' => t('Customize where the user will land when returning from the EBS payment page. You may specify &lt;front&gt; for the front page of the site, or &lt;variables&gt; to return the user to a list of variables EBS transmitted back.'),
+        '#default_value' => variable_get('uc_ebs_return_location', '<front>'),
+      );
+      $form['custom_info']['uc_ebs_checkout_button'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Submit button text'),
+        '#description' => t('Provide text for the submit button on the order review page.'),
+        '#default_value' => variable_get('uc_ebs_checkout_button', t('Submit order')),
+      );
+      return $form;
+  }
+}
+
+// Form to build the submission to ebs.in.
+function uc_ebs_form($form, $order) {
+  // Get the order total in the default currency.
+  $order_total = uc_currency_format($order->order_total, TRUE, FALSE, '.');
+
+  // Convert any monetary value from the store's currency to Indian Rupees.
+  $result = _uc_ebs_currency_calc($order->order_total);
+
+  // Get the converted total and the rate of conversion
+  $inr_total = uc_currency_format($result['value'], FALSE, FALSE, '.');
+  $inr_rate = uc_currency_format($result['rate'], FALSE, FALSE, '.');
+
+  // Make a description for the user
+  $description .= t('Order @order from @store.', array('@order' => $order->order_id, '@store' => variable_get('uc_store_name', t('Ubercart'))));
+  $description .= t(' (Total order value of !order_total calculated at $1 to !inr_rate INR)', array(
+    '!inr_total' => $inr_total,
+    '!order_total' => $order_total,
+    '!inr_rate' => $inr_rate,
+  ));
+
+  // General information
+  $url_option = array(
+    'query' => 'DR={DR}',
+    'absolute' => TRUE,
+  );
+  $data = array(
+    'account_id' => variable_get('uc_ebs_account_id', ''),
+    'reference_no' => $order->order_id,
+    'amount' => $inr_total,
+    'description' => $description,
+    'return_url' => url('ebs_response', $url_option),
+    'mode' => variable_get('uc_ebs_method', 'LIVE'),
+  );
+
+  // Address information.
+  $data = array_merge($data, _uc_ebs_address($order, 'billing'));
+  if (uc_order_is_shippable($order)) {
+    $data = array_merge($data, _uc_ebs_address($order, 'delivery'));
+  }
+
+  // Put the data on a form.
+  foreach ($data as $name => $value) {
+    $form[$name] = array('#type' => 'hidden', '#value' => $value);
+  }
+
+  // Shoot the user to EBS upon submission.
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => variable_get('uc_ebs_checkout_button', t('Submit order')),
+  );
+  $form['#action'] = url("https://secure.ebs.in/pg/ma/sale/pay/");
+
+  return $form;
+}
+
+function _uc_ebs_currency_calc($total) {
+  $rate = variable_get('uc_ebs_rate', NULL);
+  if (!$rate) {
+    $result = currency_api_convert(variable_get('uc_currency_code', 'USD'), 'INR', $total);
+  }
+  else {
+    $result['value'] = $total * $rate;
+    $result['rate'] = $rate;
+  }
+  return $result;
+}
+
+/**
+ * Builds the EBS data for an order's addresses.
+ */
+function _uc_ebs_address($order, $address_type) {
+
+  // Get the 2 digit ISO code for the given country.
+  $country = uc_get_country_data(array('country_id' => $order->{$address_type . '_country'}));
+  if ($country === FALSE) {
+    $country = array(0 => array('country_iso_code_3' => 'USA'));
+  }
+
+  $arg_name = '';
+  switch ($address_type) {
+    case 'billing':
+    break;
+    case 'delivery':
+      $arg_name = 'ship_';
+    break;
+  }
+  $data = array(
+    $arg_name .'name'         => drupal_substr($order->{$address_type .'_first_name'} .' '. $order->{$address_type .'_last_name'}, 0, 100),
+    $arg_name .'address'      => drupal_substr($order->{$address_type .'_street1'}, 0, 100),
+    $arg_name .'city'         => drupal_substr($order->{$address_type .'_city'}, 0, 100),
+    $arg_name .'state'        => $order->{$address_type .'_zone'},
+    $arg_name .'postal_code'  => drupal_substr($order->{$address_type .'_postal_code'}, 0, 100),
+    $arg_name .'country'      => $country[0]['country_iso_code_3'],
+    $arg_name .'phone'        => drupal_substr($order->{$address_type .'_phone'}, 0, 30),
+
+    // This isn't actually necessary for shipping info, but it's easier
+    // than writing logic around it. EBS doesn't care.
+    $arg_name .'email'        => substr($order->primary_email, 0, 100),
+  );
+
+  return $data;
+}
+
+// Response form, hit by ebs.in.
+function uc_ebs_response() {
+
+  // DR must be set as it is the transmission from the EBS server.
+  if (!isset($_GET['DR'])) {
+    watchdog('uc_ebs', 'EBS response without proper GET variable set.', WATCHDOG_ERROR);
+    drupal_goto('<front>');
+  }
+
+  // Include the code for cryptaculation.
+  require_once('script/rc43.php');
+
+  // (re) Fix up spaces and convert from base64.
+  $dr = preg_replace("/\s/", "+", $_GET['DR']);
+  $query = base64_decode($dr);
+
+  // Decrypt the query.
+  $rc4 = new Crypt_RC4(variable_get('uc_ebs_account_key', ''));
+  $rc4->decrypt($query);
+
+  // Split the query string into an associative array.
+  $query = explode('&', $query);
+  $response = array();
+  foreach ($query as $param) {
+    list($key, $value) = explode('=', $param);
+    $response[$key] = urldecode($value);
+  }
+
+  // Check that the transaction is error-free.
+  if (!isset($response['ResponseCode']) || $response['ResponseCode']) {
+    watchdog('uc_ebs', t("Response returned an error code... The response was: @response", array('@response' => print_r($response, TRUE))), WATCHDOG_ERROR);
+    drupal_goto('<front>');
+  }
+
+  // Load the order associated with this transaction.
+  if (!($order = uc_order_load($response['MerchantRefNo']))) {
+    watchdog('uc_ebs', t("The order couldn't be loaded... The response was: @response", array('@response' => print_r($response, TRUE))), WATCHDOG_ERROR);
+    drupal_goto('<front>');
+  }
+
+  // I don't see any way in the manual to handle partial payments, or to know if it's a partial payment
+  // like PayPal does ...
+  uc_payment_enter($order->order_id, 'ebs', $response['Amount'], $order->uid, NULL, $response['ResponseMessage']);
+  uc_cart_complete_sale($order);
+
+  // Mark the payent on the order log.
+  uc_order_comment_save($order->order_id, 0, t('Payment of !amount !currency submitted through EBS.', array('!amount' => uc_currency_format($response['Amount'], FALSE), '!currency' => 'INR')), 'order', 'payment_received');
+
+  // Display a table of transaction details.
+  if (variable_get('uc_ebs_return_location', '<front>') == '<variables>') {
+    $rows = array();
+    foreach ($response as $key => $value) {
+      $rows[] = array($key, $value);
+    }
+
+    return theme('table', array(array('data' => t('EBS trasaction details'), 'colspan' => 2)), $rows);
+  }
+
+  // Redirect the user as specified in the payment method settings.
+  else {
+    drupal_goto(variable_get('uc_ebs_return_location', '<front>'));
+  }
+}
